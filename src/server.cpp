@@ -1,183 +1,172 @@
 #include <SFML/Network.hpp>
-#include "io.hpp"
 #include "playerData.hpp"
 #include <memory>
 #include <unordered_map>
 
-using ID = int;
-using Port = unsigned short;
-using Address = sf::IpAddress;
-using Color = cx::Color;
-using Vector2 = cx::Vec2f;
-
-// Colors
-const std::vector<Color> colors
-{
-   Color::blue(), Color::yellow(), Color::cyan(), Color::green(), Color::magenta(),
-   Color::orange(), Color::pink(), Color::purple(), Color::red()
+struct Client {
+   sf::IpAddress address;
+   unsigned short port;
 };
 
-int main()
-{
+struct Player {
+   cx::Color color;
+   cx::Vec2f position;
+};
+
+static constexpr size_t colorCount = 9;
+static constexpr cx::Color colors[colorCount] {
+   cx::Color::blue(), cx::Color::yellow(), cx::Color::cyan(), cx::Color::green(), cx::Color::magenta(),
+   cx::Color::orange(), cx::Color::pink(), cx::Color::purple(), cx::Color::red()
+};
+
+int main() {
+   sf::UdpSocket socket;
+   if (socket.bind(sf::Socket::AnyPort) != sf::Socket::Status::Done) {
+      printf("Could not bind to port %d!\n", socket.getLocalPort());
+      exit(EXIT_FAILURE);
+   }
+
+   socket.setBlocking(false);
+   printf("Server listening on %s:%d...\n", sf::IpAddress::getLocalAddress().toString().c_str(), socket.getLocalPort());
    srand(time(nullptr));
 
-   // Get the server port from the user
-   Port port = getInteger("Input server port: "s);
-
-   // Setup the UDP sockets
-   sf::UdpSocket UDPsocket;
-   UDPsocket.setBlocking(false);
-
-   std::unordered_map<ID, std::pair<Address, Port>> UDPclients;
-   std::unordered_map<ID, std::pair<Vector2, Color>> players;
-   ID nextID = 1;
+   std::unordered_map<int, Client> UDPclients;
+   std::unordered_map<int, Player> players;
+   int nextID = 1;
 
    sf::Packet senderPacket;
-   Address senderAddress;
-   Port senderPort;
+   sf::IpAddress senderAddress;
+   unsigned short senderPort;
 
-   if (UDPsocket.bind(port, sf::IpAddress::Any) != sf::Socket::Status::Done)
-      throw std::runtime_error("Could not bind UDP to port.");
-
-   std::cout << "UDP Server initialized on port " << port << "." << std::endl;
-
-   // Setup the TCP sockets
    sf::TcpListener listener;
-
-   if (listener.listen(port, sf::IpAddress::Any) != sf::Socket::Status::Done)
-      throw std::runtime_error("Could not bind TCP to port.");
+   if (listener.listen(socket.getLocalPort()) != sf::Socket::Status::Done) {
+      printf("Could not bind TCP listener.\n");
+      exit(EXIT_FAILURE);
+   }
 
    std::vector<std::unique_ptr<sf::TcpSocket>> TCPclients;
-   std::unordered_map<sf::TcpSocket*, ID> TCPids;
+   std::unordered_map<sf::TcpSocket*, int> TCPids;
    sf::SocketSelector TCPselector;
    TCPselector.add(listener);
    listener.setBlocking(false);
 
-   std::cout << "TCP Listener initialized on port " << port << "." << std::endl;
-
-   // Main server loop
-   while (true)
-   {
-      // Check if any chat messages can be received
-      if (TCPselector.wait(sf::milliseconds(1)))
-      {
-         if (TCPselector.isReady(listener))
-         {
+   while (true) {
+      if (TCPselector.wait(sf::milliseconds(1))) {
+         if (TCPselector.isReady(listener)) {
             auto socket = std::make_unique<sf::TcpSocket>();
-            if (listener.accept(*socket) != sf::Socket::Status::Done)
-               throw std::runtime_error("Could not accept socket!");
+            if (listener.accept(*socket) != sf::Socket::Status::Done) {
+               printf("Could not accept socket!\n");
+               exit(EXIT_FAILURE);
+            }
 
             TCPselector.add(*socket);
             TCPclients.push_back(std::move(socket));
-
-            std::cout << "New TCP socket connected.\n";
+            printf("New TCP socket connected.\n");
          }
 
-         // Accept and echo messages
-         for (auto it = TCPclients.begin(); it != TCPclients.end();)
-         {
-            if (TCPselector.isReady(**it))
-            {
-               sf::Packet packet;
+         for (auto it = TCPclients.begin(); it != TCPclients.end();) {
+            if (!TCPselector.isReady(**it)) {
+               ++it;
+               continue;
+            }
 
-               if ((*it)->receive(packet) == sf::Socket::Status::Done)
-               {
-                  Message message;
-                  packet >> message;
+            sf::Packet packet;
+            sf::Socket::Status status = (*it)->receive(packet);
+            if (status == sf::Socket::Status::Partial || status == sf::Socket::Status::NotReady) {
+               ++it;
+               continue;
+            }
 
-                  TCPids[it->get()] = message.sender;
+            if (status == sf::Socket::Status::Done) {
+               Message message;
+               packet >> message;
 
-                  if (message.message.size() == 0)
-                  {
-                     ++it;
+               TCPids[it->get()] = message.sender;
+               if (message.message.empty()) {
+                  ++it;
+                  continue;
+               }
+
+               printf("Chat message from ID %d: %s\n", message.sender, message.message.c_str());
+               sf::Packet echoPacket;
+               echoPacket << message;
+
+               for (std::unique_ptr<sf::TcpSocket> &other: TCPclients) {
+                  if (other.get() == it->get()) {
                      continue;
                   }
 
-                  std::cout << "Chat message from ID " << message.sender << ": " << message.message << std::endl;
-
-                  sf::Packet echoPacket;
-                  echoPacket << message;
-
-                  for (auto& chatSocket : TCPclients)
-                     if (chatSocket.get() != it->get())
-                        if (chatSocket->send(echoPacket) != sf::Socket::Status::Done)
-                           std::cout << "Failed to echo user's message!" << std::endl;
-                  
-                  ++it;
+                  if (other->send(echoPacket) != sf::Socket::Status::Done) {
+                     printf("Failed to echo user's message!\n");
+                  }
                }
-               else
-               {
-                  // Send "Death" packages
-                  sf::Packet endPacket;
-                  endPacket << PlayerData{TCPids.at(it->get()), Vector2(), Color(), false};
+               ++it;
+               continue;
+            }
 
-                  UDPclients.erase(TCPids.at(it->get()));
-                  players.erase(TCPids.at(it->get()));
+            if (auto found = TCPids.find(it->get()); found != TCPids.end()) {
+               int leftId = found->second;
 
-                  std::cout << "TCP client disconnected." << std::endl;
-                  TCPselector.remove(**it);
-                  it = TCPclients.erase(it);
+               sf::Packet endPacket;
+               endPacket << PlayerData{leftId, cx::Vec2f(), cx::Color(), false};
 
-                  for (const auto& [id, client] : UDPclients)
-                     UDPsocket.send(endPacket, client.first, client.second);
+               UDPclients.erase(leftId);
+               players.erase(leftId);
+               TCPids.erase(found);
+
+               printf("TCP client %d disconnected.\n", leftId);
+               for (const auto &[cid, client]: UDPclients) {
+                  socket.send(endPacket, client.address, client.port);
                }
             }
-            else ++it;
+            TCPselector.remove(**it);
+            it = TCPclients.erase(it);
          }
       }
 
-      // Check if any packets can be received
-      senderPacket.clear();
-      if (UDPsocket.receive(senderPacket, senderAddress, senderPort) == sf::Socket::Status::Done)
-      {
-         // Unload the packet
+      while (socket.receive(senderPacket, senderAddress, senderPort) == sf::Socket::Status::Done) {
          PlayerData player;
          senderPacket >> player;
+         senderPacket.clear();
 
-         if (player.position == Vector2() && player.color == Color())
-            continue;
-
-         // Add the client if it just connected
-         bool newClient = true;
-
-         for (const auto& [id, client] : UDPclients)
-         {
-            if (client.first == senderAddress && client.second == senderPort)
-            {
-               player.id = id;
-               newClient = false;
+         int id = -1;
+         for (const auto &[cid, client]: UDPclients) {
+            if (client.address == senderAddress && client.port == senderPort) {
+               id = cid;
                break;
             }
          }
 
-         // Setup any new clients
-         if (newClient)
-         {
-            player.id = nextID++;
-            UDPclients[player.id] = {senderAddress, senderPort};
+         if (id == -1) {
+            if (!player.registering) {
+               continue;
+            }
+            id = nextID++;
+            UDPclients[id] = {senderAddress, senderPort};
+            players[id].color = colors[rand() % colorCount];
 
-            players[player.id].second = colors.at(rand() % colors.size());
-            std::cout << "New sender connected: ID: " << player.id << " INFO: " << senderAddress << ":" << senderPort << std::endl;
-
+            printf("New sender connected: %d@%s:%u.\n", id, senderAddress.toString().c_str(), senderPort);
             sf::Packet idPacket;
-            idPacket << player.id;
-            UDPsocket.send(idPacket, senderAddress, senderPort);
+            idPacket << id;
+            socket.send(idPacket, senderAddress, senderPort);
          }
-         else
-            players[player.id] = {player.position, player.color};
+         else {
+            players[id] = {player.color, player.position};
+         }
 
-         // Echo the message to other connected clients
          sf::Packet response;
-         for (const auto& [id, info] : players)
-            response << PlayerData{id, info.first, info.second};
+         for (const auto &[id, info]: players) {
+            response << PlayerData{id, info.position, info.color};
+         }
 
-         for (const auto& [id, client] : UDPclients)
-            UDPsocket.send(response, client.first, client.second);
+         for (const auto &[id, client]: UDPclients) {
+            socket.send(response, client.address, client.port);
+         }
       }
    }
 
-   std::cout << "Server disconnected." << std::endl;
-
-   for (auto& socket : TCPclients)
+   printf("Server disconnected.\n");
+   for (std::unique_ptr<sf::TcpSocket> &socket: TCPclients) {
       socket->disconnect();
+   }
 }

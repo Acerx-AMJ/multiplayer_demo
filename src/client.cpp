@@ -1,4 +1,3 @@
-#include "io.hpp"
 #include "playerData.hpp"
 #include <CX/Camera.hpp>
 #include <CX/EventHandler/EventHandler.hpp>
@@ -6,6 +5,7 @@
 #include <CX/Text/Text.hpp>
 #include <CX/Timer/BasicTimer.hpp>
 #include <SFML/Network.hpp>
+#include <iostream>
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
@@ -25,6 +25,25 @@ std::mutex mutex;
 sf::Font defaultFont;
 sf::Texture chatBubbleTexture;
 
+struct ChatBubble {
+   float elapsed = 0.0f;
+   float lifetime = 0.0f;
+   cx::Rect rect;
+   cx::Text text;
+};
+
+void flush() {
+   std::cout << std::flush;
+}
+
+void clear_line(int lines = 1) {
+   for (int i = 0; i < lines; ++i) {
+      printf("\r\e[K\e[F");
+   }
+   printf("\r\e[K");
+   flush();
+}
+
 void sendMessages(sf::UdpSocket& socket, Port port, ID playerID, cx::Rect& player);
 void receiveMessages(sf::UdpSocket& socket, sf::TcpSocket& chatSocket, Port port, ID playerID, cx::Rect& player, std::unordered_map<ID, cx::Rect*>& others, ChatBubbleContainer& container);
 void createBubble(ChatBubbleContainer& container, const std::string& message, ID playerID);
@@ -32,14 +51,16 @@ void createBubble(ChatBubbleContainer& container, const std::string& message, ID
 int main()
 {
    // Bind socket to the given port
-   Port port = getInteger("Input desired server's port: "s);
+   int port = 0;
+   printf("Input port: ");
+   std::cin >> std::ws >> port;
 
    sf::UdpSocket socket;
    socket.bind(sf::Socket::AnyPort);
 
    // Send garbage data to trigger new client in server
    sf::Packet startingPacket;
-   startingPacket << PlayerData{-1, cx::Vec2f(1.f)};
+   startingPacket << PlayerData{0, cx::Vec2f(0.0f), cx::Color::black(), true, true};
 
    if (socket.send(startingPacket, {127, 0, 0, 1}, port) != sf::Socket::Status::Done)
       throw std::runtime_error("Could not send starting data to server.");
@@ -62,7 +83,7 @@ int main()
       throw std::runtime_error("Could not connect TCP socket to server!");
 
    sf::Packet startingChatPacket;
-   startingChatPacket << Message{playerID, ""s};
+   startingChatPacket << Message{playerID, ""};
 
    socket.setBlocking(false);
    chatSocket.setBlocking(false);
@@ -74,7 +95,7 @@ int main()
    std::cout << "Connected to port " << port << " with ID " << playerID << "." << std::endl;
 
    // Create the window
-   sf::RenderWindow window (sf::VideoMode(960, 540), "Multiplayer Demo"s);
+   sf::RenderWindow window (sf::VideoMode(960, 540), "Multiplayer Demo");
    cx::EventHandler event (window);
    window.setFramerateLimit(60u);
 
@@ -87,11 +108,11 @@ int main()
    camera.set_smooth_zoom_speed(4.f);
    camera.set_zoom_bounds(.5f, 3.f);
 
-   defaultFont.loadFromFile("assets/DejaVuSansMono.ttf"s);
-   chatBubbleTexture.loadFromFile("assets/chatBubble.png"s);
+   defaultFont.loadFromFile("assets/DejaVuSansMono.ttf");
+   chatBubbleTexture.loadFromFile("assets/chatBubble.png");
 
    cx::Rect chatBar (cx::Vec2f(600.f, 40.f), cx::Vec2f(), cx::Color(125, 125));
-   cx::Text chatText (""s, defaultFont, cx::Vec2f(), 24u);
+   cx::Text chatText ("", defaultFont, cx::Vec2f(), 24u);
 
    // Create containers
    std::unordered_map<ID, cx::Rect*> players;
@@ -127,7 +148,7 @@ int main()
          }
 
          chat.clear();
-         chatText.set_string(""s);
+         chatText.set_string("");
          chatting = false;
       }
 
