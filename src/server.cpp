@@ -13,8 +13,8 @@ using Vector2 = cx::Vec2f;
 // Colors
 const std::vector<Color> colors
 {
-   Color::blue, Color::brown, Color::cyan, Color::green, Color::magenta,
-   Color::orange, Color::pink, Color::purple, Color::red
+   Color::blue(), Color::yellow(), Color::cyan(), Color::green(), Color::magenta(),
+   Color::orange(), Color::pink(), Color::purple(), Color::red()
 };
 
 int main()

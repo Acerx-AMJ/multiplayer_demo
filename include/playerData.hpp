@@ -1,8 +1,8 @@
 #ifndef NETWORKING_PLAYER_DATA_HPP
 #define NETWORKING_PLAYER_DATA_HPP
 
-#include <Cx/Color.hpp>
-#include <Cx/Vector.hpp>
+#include <CX/Color.hpp>
+#include <CX/Vector/Vec2.hpp>
 #include <SFML/Network/Packet.hpp>
 
 struct PlayerData

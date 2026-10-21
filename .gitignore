@@ -1,0 +1,7 @@
+/.vs
+/.vscode
+/.cache
+/.clangd
+/build
+/server
+/client

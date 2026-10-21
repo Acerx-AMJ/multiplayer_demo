@@ -1,6 +1,10 @@
 #include "io.hpp"
 #include "playerData.hpp"
-#include <Cx/Cx.hpp>
+#include <CX/Camera.hpp>
+#include <CX/EventHandler/EventHandler.hpp>
+#include <CX/Rect/Rect.hpp>
+#include <CX/Text/Text.hpp>
+#include <CX/Timer/BasicTimer.hpp>
 #include <SFML/Network.hpp>
 #include <unordered_map>
 #include <atomic>
@@ -8,7 +12,7 @@
 #include <thread>
 
 using Key = cx::Key;
-using Button = cx::ControllerKey;
+using Button = cx::Controller;
 using Axis = cx::ControllerAxis;
 using Vector = cx::ControllerVector;
 using ID = int;
@@ -75,13 +79,13 @@ int main()
    window.setFramerateLimit(60u);
 
    // Create the objects
-   cx::Rect platform (cx::Vec2f(400.f), event.getCenter(), cx::Color::gray);
-   cx::Rect player (cx::Vec2f(50.f), event.getCenter());
+   cx::Rect platform (cx::Vec2f(400.f), event.get_center(), cx::Color::gray());
+   cx::Rect player (cx::Vec2f(50.f), event.get_center());
 
-   cx::Camera camera (player, event.getSize());
-   camera.setSmoothCameraSpeed(5.f);
-   camera.setSmoothCameraZoomSpeed(4.f);
-   camera.setZoomBounds(.5f, 3.f);
+   cx::Camera camera (player, event.get_size());
+   camera.set_smooth_speed(5.f);
+   camera.set_smooth_zoom_speed(4.f);
+   camera.set_zoom_bounds(.5f, 3.f);
 
    defaultFont.loadFromFile("assets/DejaVuSansMono.ttf"s);
    chatBubbleTexture.loadFromFile("assets/chatBubble.png"s);
@@ -107,7 +111,7 @@ int main()
       event.update();
 
       // Update the chat
-      if (event.isKeyReleased(Key::enter) && chatting && chat.size() > 1)
+      if (event.is_released(Key::enter) && chatting && chat.size() > 1)
       {
          createBubble(chatBubbles, chat, playerID);
 
@@ -123,40 +127,40 @@ int main()
          }
 
          chat.clear();
-         chatText.setString(""s);
+         chatText.set_string(""s);
          chatting = false;
       }
 
-      if (event.isKeyReleased(Key::slash))
+      if (event.is_released(Key::slash))
          chatting = !chatting;
 
-      if (chatting && event.isTyping())
+      if (chatting && event.is_typing())
       {
-         const char typed = event.getTypedChar();
+         const char typed = event.get_typed_char();
          
          if (typed == 8 && chat.size() > 0)
             chat.pop_back();
          else if (typed != 8 && typed != '/' && chat.size() < 48)
             chat += typed;
-         chatText.setString(chat);
+         chatText.set_string(chat);
       }
 
-      const float dt = event.getDt();
-      cx::Vec2f direction = event.getInputVector(Key::d, Key::a, Key::s, Key::w, Vector::rs);
+      const float dt = event.get_dt();
+      cx::Vec2f direction = event.get_vector(Key::d, Key::a, Key::s, Key::w, Vector::rs);
 
       std::lock_guard<std::mutex> lock (mutex);
 
       // Move the player
-      if (!direction.empty() && event.isKeyReleased(Key::space) && !chatting)
+      if (!direction.empty() && event.is_released(Key::space) && !chatting)
       {
          player.move(direction.normalize() * dt * 3600.f + cx::Vec2f(cx::randfu(-50.f, 50.f), cx::randfu(-50.f, 50.f)));
          camera.shake(20.f, .5f, 100.f);
       }
       else if (!chatting)
-         player.move(direction.normalize() * dt * 200.f * (event.isKeyDown(Key::shift) ? 1.5f : 1.f));
+         player.move(direction.normalize() * dt * 200.f * (event.is_down(Key::shift) ? 1.5f : 1.f));
 
       // Zoom the camera
-      const float scrollDelta = event.getMouseScrollDelta();
+      const float scrollDelta = event.get_scroll_delta();
 
       if (scrollDelta >= .5f)
          camera.zoom(1 - dt * 6.f);
@@ -169,22 +173,22 @@ int main()
          // Update chat bubble position
          if (it->first == playerID)
          {
-            it->second.second.first->setCenter(player.getCenter() - cx::Vec2f(0.f, 75.f));
-            it->second.second.second->setCenter(player.getCenter() - cx::Vec2f(0.f, 80.f));
+            it->second.second.first->set_center(player.get_center() - cx::Vec2f(0.f, 75.f));
+            it->second.second.second->set_center(player.get_center() - cx::Vec2f(0.f, 80.f));
          }
          else
          {
-            it->second.second.first->setCenter(players.at(it->first)->getCenter() - cx::Vec2f(0.f, 75.f));
-            it->second.second.second->setCenter(players.at(it->first)->getCenter() - cx::Vec2f(0.f, 80.f));
+            it->second.second.first->set_center(players.at(it->first)->get_center() - cx::Vec2f(0.f, 75.f));
+            it->second.second.second->set_center(players.at(it->first)->get_center() - cx::Vec2f(0.f, 80.f));
          }
 
          // Fade them out and delete them
-         if (it->second.first.first.getElapsed() >= 6.f)
+         if (it->second.first.first.get_elapsed() >= 6.f)
          {
             it->second.first.second += dt;
 
-            it->second.second.first->setColor(cx::Color::white.blend(cx::Color(255, 0), it->second.first.second));
-            it->second.second.second->setColor(cx::Color::black.blend(cx::Color(0, 0), it->second.first.second));
+            it->second.second.first->set_color(cx::Color::white().blend(cx::Color(255, 0), it->second.first.second));
+            it->second.second.second->set_color(cx::Color::black().blend(cx::Color(0, 0), it->second.first.second));
 
             if (it->second.first.second >= 1.f)
             {
@@ -202,8 +206,8 @@ int main()
 
       if (chatting)
       {
-         chatBar.setCenter(camera.getCenter() + cx::Vec2f(0.f, 100.f));
-         chatText.setCenter(chatBar.getCenter());
+         chatBar.set_center(camera.get_center() + cx::Vec2f(0.f, 100.f));
+         chatText.set_center(chatBar.get_center());
       }
 
       camera.apply(window);
@@ -257,13 +261,13 @@ void sendMessages(sf::UdpSocket& socket, Port port, ID playerID, cx::Rect& playe
       if (quit) return;
 
       // Sleep for a while to relax the CPU
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(std::chrono::milliseconds(15));
 
       std::lock_guard<std::mutex> lock (mutex);
 
       // Send the packets
       sf::Packet packet;
-      packet << PlayerData{playerID, player.getCenter(), player.getColor()};
+      packet << PlayerData{playerID, player.get_center(), player.get_color()};
 
       if (socket.send(packet, {127, 0, 0, 1}, port) != sf::Socket::Status::Done)
          throw std::runtime_error("Could not send data");
@@ -303,7 +307,7 @@ void receiveMessages(sf::UdpSocket& socket, sf::TcpSocket& chatSocket, Port port
 
             if (playerData.id == playerID)
             {
-               player.setColor(playerData.color);
+               player.set_color(playerData.color);
                continue;
             }
 
@@ -325,12 +329,12 @@ void receiveMessages(sf::UdpSocket& socket, sf::TcpSocket& chatSocket, Port port
                }
             }
             else if (others.count(playerData.id))
-               others[playerData.id]->setCenter(playerData.position);
+               others[playerData.id]->set_center(playerData.position);
             else
             {
                cx::Rect* shape = new cx::Rect(cx::Vec2f(50.f));
-               shape->setCenter(playerData.position);
-               shape->setColor(playerData.color);
+               shape->set_center(playerData.position);
+               shape->set_color(playerData.color);
                others.insert({playerData.id, shape});
             }
          }
@@ -348,10 +352,10 @@ void createBubble(ChatBubbleContainer& container, const std::string& message, in
    }
 
    cx::Text* text = new cx::Text(message, defaultFont, cx::Vec2f(), 24u);
-   text->setColor(cx::Color::black);
+   text->set_color(cx::Color::black());
 
-   cx::Rect* shape = new cx::Rect(cx::Vec2f(std::max(140.f, text->getWidth()) + 10.f, 50.f));
-   shape->setTexture(chatBubbleTexture);
+   cx::Rect* shape = new cx::Rect(cx::Vec2f(std::max(140.f, text->get_width()) + 10.f, 50.f));
+   shape->set_texture(&chatBubbleTexture);
 
    container[playerID] = {{cx::BasicTimer(), 0.f}, {shape, text}};
 }
