@@ -208,7 +208,7 @@ int main() {
    }
 
    printf("Successfully connected to %s:%u with ID %d.\n", IPAddress.toString().c_str(), port, playerID);
-   sf::RenderWindow window (sf::VideoMode(800, 600), "Multiplayer Demo");
+   sf::RenderWindow window (sf::VideoMode(960, 540), "Multiplayer Demo");
    cx::EventHandler event (window);
    window.setFramerateLimit(60);
 
