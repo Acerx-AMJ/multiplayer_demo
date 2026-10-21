@@ -5,17 +5,18 @@
 #include <CX/Text/Text.hpp>
 #include <CX/Timer/BasicTimer.hpp>
 #include <SFML/Network.hpp>
+#include <filesystem>
 #include <iostream>
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
 #include <thread>
 
-std::atomic<bool> quit = false;
-std::mutex mutex;
-
+std::vector<sf::Texture> textures;
 sf::Font defaultFont;
 sf::Texture chatBubbleTexture;
+sf::Texture chatIcon;
+sf::Texture brushIcon;
 
 struct ChatBubble {
    bool alive = false;
@@ -26,6 +27,7 @@ struct ChatBubble {
 };
 
 struct Player {
+   int textureId;
    cx::Rect player;
    ChatBubble bubble;
 };
@@ -51,13 +53,13 @@ void createBubble(std::unordered_map<int, Player> &players, const std::string& m
    players[playerID].bubble = {true, 0.0f, 0.0f, rect, text};
 }
 
-void sendMessages(sf::UdpSocket &socket, const sf::IpAddress &address, unsigned short port, int playerID, cx::Rect &player) {
+void sendMessages(sf::UdpSocket &socket, const sf::IpAddress &address, unsigned short port, int playerID, Player &player, std::atomic<bool> &quit, std::mutex &mutex) {
    while (!quit) {
       std::this_thread::sleep_for(std::chrono::milliseconds(15));
       std::lock_guard<std::mutex> lock (mutex);
 
       sf::Packet packet;
-      packet << PlayerData{playerID, player.get_center(), player.get_color()};
+      packet << PlayerData{playerID, player.player.get_center(), player.textureId};
 
       if (socket.send(packet, address, port) != sf::Socket::Status::Done) {
          printf("Could not send data.\n");
@@ -66,7 +68,7 @@ void sendMessages(sf::UdpSocket &socket, const sf::IpAddress &address, unsigned 
    }
 }
 
-void receiveMessages(sf::UdpSocket &socket, sf::TcpSocket &chatSocket, unsigned short port, int playerID, cx::Rect &player, std::unordered_map<int, Player> &players) {
+void receiveMessages(sf::UdpSocket &socket, sf::TcpSocket &chatSocket, unsigned short port, int playerID, Player &player, std::unordered_map<int, Player> &players, std::atomic<bool> &quit, std::mutex &mutex) {
    while (!quit) {
       sf::Packet response;
       sf::IpAddress sender;
@@ -90,7 +92,7 @@ void receiveMessages(sf::UdpSocket &socket, sf::TcpSocket &chatSocket, unsigned 
          response >> playerData;
 
          if (playerData.id == playerID) {
-            player.set_color(playerData.color);
+            player.textureId = playerData.textureId;
             continue;
          }
 
@@ -99,9 +101,11 @@ void receiveMessages(sf::UdpSocket &socket, sf::TcpSocket &chatSocket, unsigned 
          }
          else if (auto it = players.find(playerData.id); it != players.end()) {
             it->second.player.set_center(playerData.position);
+            it->second.textureId = playerData.textureId;
          }
          else {
-            players[playerData.id].player = cx::Rect({50.0f, 50.0f}, playerData.position, playerData.color);
+            players[playerData.id].player = cx::Rect({50.0f, 50.0f}, playerData.position);
+            players[playerData.id].textureId = playerData.textureId;
          }
       }
    }
@@ -131,9 +135,43 @@ int main() {
       exit(EXIT_FAILURE);
    }
 
+   // load all assets
+   defaultFont.loadFromFile("assets/DejaVuSansMono.ttf");
+   chatBubbleTexture.loadFromFile("assets/chatBubble.png");
+   chatIcon.loadFromFile("assets/chat.png");
+   brushIcon.loadFromFile("assets/brush.png");
+
+   auto dirIter = std::filesystem::directory_iterator("assets/players");
+   int fileCount = std::count_if(begin(dirIter), end(dirIter), [](const auto &entry) { return entry.is_regular_file(); });
+   textures.resize(fileCount);
+
+   for (const auto &file: std::filesystem::directory_iterator("assets/players")) {
+      if (!file.is_regular_file()) {
+         continue;
+      }
+      const std::string stem = file.path().stem().string();
+      size_t pos = stem.find_last_not_of("0123456789");
+      size_t start = (pos == std::string::npos) ? 0 : pos + 1;
+      if (start >= stem.size()) {
+         continue;
+      }
+
+      int n = std::stoi(stem.substr(start)) - 1;
+      if (n < 0 || (size_t)n >= textures.size()) {
+         printf("Invalid player texture '%s'. Texture count is %zu.\n", file.path().string().c_str(), textures.size());
+         continue;
+      }
+
+      if (!textures[n].loadFromFile(file.path().string())) {
+         printf("Failed to load '%s'.\n", file.path().string().c_str());
+      }
+   }
+   srand(time(nullptr));
+   int initialTextureId = (textures.empty() ? 0 : rand() % textures.size());
+
    // Send register packet
    sf::Packet startingPacket;
-   startingPacket << PlayerData{0, cx::Vec2f(0.0f), cx::Color::black(), true, true};
+   startingPacket << PlayerData{0, cx::Vec2f(0.0f), initialTextureId, true, true};
 
    if (socket.send(startingPacket, IPAddress, port) != sf::Socket::Status::Done) {
       printf("Could not send register packet to server.\n");
@@ -174,24 +212,25 @@ int main() {
    cx::EventHandler event (window);
    window.setFramerateLimit(60);
 
-   defaultFont.loadFromFile("assets/DejaVuSansMono.ttf");
-   chatBubbleTexture.loadFromFile("assets/chatBubble.png");
-
    cx::Rect chatBar (cx::Vec2f(600.f, 40.f), cx::Vec2f(), cx::Color(125, 125));
    cx::Text chatText ("", defaultFont, cx::Vec2f(), 24u);
 
    std::unordered_map<int, Player> players;
-   players[playerID].player = cx::Rect({50.0f, 50.0f}, event.get_center());
-   cx::Rect &player = players[playerID].player;
+   Player &player = players[playerID];
+   player.player = cx::Rect({50.0f, 50.0f}, event.get_center());
+   player.textureId = initialTextureId;
 
    cx::Rect platform (cx::Vec2f(400.f), event.get_center(), cx::Color::gray());
-   cx::Camera camera (player, event.get_size());
+   cx::Camera camera (player.player, event.get_size());
    camera.set_smooth_speed(5.f);
    camera.set_smooth_zoom_speed(4.f);
    camera.set_zoom_bounds(.5f, 3.f);
 
-   std::thread send(sendMessages, std::ref(socket), std::ref(IPAddress), port, playerID, std::ref(player));
-   std::thread receive(receiveMessages, std::ref(socket), std::ref(chatSocket), port, playerID, std::ref(player), std::ref(players));
+   std::atomic<bool> quit = false;
+   std::mutex mutex;
+
+   std::thread send(sendMessages, std::ref(socket), std::ref(IPAddress), port, playerID, std::ref(player), std::ref(quit), std::ref(mutex));
+   std::thread receive(receiveMessages, std::ref(socket), std::ref(chatSocket), port, playerID, std::ref(player), std::ref(players), std::ref(quit), std::ref(mutex));
 
    std::string chat;
    bool chatting = false;
@@ -238,11 +277,11 @@ int main() {
       // handle player movement
       std::lock_guard<std::mutex> lock (mutex);
       if (!direction.empty() && event.is_released(cx::Key::space) && !chatting) {
-         player.move(direction.normalize() * dt * 3600.f + cx::Vec2f(cx::randfu(-50.f, 50.f), cx::randfu(-50.f, 50.f)));
+         player.player.move(direction.normalize() * dt * 3600.f + cx::Vec2f(cx::randfu(-50.f, 50.f), cx::randfu(-50.f, 50.f)));
          camera.shake(20.f, .5f, 100.f);
       }
       else if (!chatting) {
-         player.move(direction.normalize() * dt * 200.f * (event.is_down(cx::Key::shift) ? 1.5f : 1.f));
+         player.player.move(direction.normalize() * dt * 200.f * (event.is_down(cx::Key::shift) ? 1.5f : 1.f));
       }
 
       const float scrollDelta = event.get_scroll_delta();
@@ -287,6 +326,7 @@ int main() {
       platform.render(window);
 
       for (auto &[_, plr]: players) {
+         plr.player.set_texture((size_t)plr.textureId >= textures.size() ? nullptr : &textures[plr.textureId]);
          plr.player.render(window);
       }
 

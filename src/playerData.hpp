@@ -6,16 +6,16 @@
 struct PlayerData {
    int id;
    cx::Vec2f position;
-   cx::Color color;
+   int textureId;
    bool alive = true;
    bool registering = false;
 
    inline friend sf::Packet& operator<<(sf::Packet& packet, const PlayerData& data) {
-      return packet << data.id << data.position.x << data.position.y << data.color.r << data.color.g << data.color.b << data.alive << data.registering;
+      return packet << data.id << data.position.x << data.position.y << data.textureId << data.alive << data.registering;
    }
 
    inline friend sf::Packet& operator>>(sf::Packet& packet, PlayerData& data) {
-      return packet >> data.id >> data.position.x >> data.position.y >> data.color.r >> data.color.g >> data.color.b >> data.alive >> data.registering;
+      return packet >> data.id >> data.position.x >> data.position.y >> data.textureId >> data.alive >> data.registering;
    }
 };
 

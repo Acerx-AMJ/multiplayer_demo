@@ -9,14 +9,8 @@ struct Client {
 };
 
 struct Player {
-   cx::Color color;
+   int textureId;
    cx::Vec2f position;
-};
-
-static constexpr size_t colorCount = 9;
-static constexpr cx::Color colors[colorCount] {
-   cx::Color::blue(), cx::Color::yellow(), cx::Color::cyan(), cx::Color::green(), cx::Color::magenta(),
-   cx::Color::orange(), cx::Color::pink(), cx::Color::purple(), cx::Color::red()
 };
 
 int main() {
@@ -108,7 +102,7 @@ int main() {
                int leftId = found->second;
 
                sf::Packet endPacket;
-               endPacket << PlayerData{leftId, cx::Vec2f(), cx::Color(), false};
+               endPacket << PlayerData{leftId, cx::Vec2f(), 0, false};
 
                UDPclients.erase(leftId);
                players.erase(leftId);
@@ -143,7 +137,7 @@ int main() {
             }
             id = nextID++;
             UDPclients[id] = {senderAddress, senderPort};
-            players[id].color = colors[rand() % colorCount];
+            players[id].textureId = player.textureId;
 
             printf("New sender connected: %d@%s:%u.\n", id, senderAddress.toString().c_str(), senderPort);
             sf::Packet idPacket;
@@ -151,12 +145,12 @@ int main() {
             socket.send(idPacket, senderAddress, senderPort);
          }
          else {
-            players[id] = {player.color, player.position};
+            players[id] = {player.textureId, player.position};
          }
 
          sf::Packet response;
          for (const auto &[id, info]: players) {
-            response << PlayerData{id, info.position, info.color};
+            response << PlayerData{id, info.position, info.textureId};
          }
 
          for (const auto &[id, client]: UDPclients) {
