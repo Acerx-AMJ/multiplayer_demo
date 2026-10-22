@@ -12,7 +12,9 @@
 #include <mutex>
 #include <thread>
 
-std::vector<sf::Texture> textures;
+constexpr int windowWidth = 960;
+constexpr int windowHeight = 540;
+
 sf::Font defaultFont;
 sf::Texture chatBubbleTexture;
 sf::Texture chatIcon;
@@ -54,12 +56,20 @@ void createBubble(std::unordered_map<int, Player> &players, const std::string& m
 }
 
 void sendMessages(sf::UdpSocket &socket, const sf::IpAddress &address, unsigned short port, int playerID, Player &player, std::atomic<bool> &quit, std::mutex &mutex) {
+   int lastTextureId = -1;
+
    while (!quit) {
       std::this_thread::sleep_for(std::chrono::milliseconds(15));
       std::lock_guard<std::mutex> lock (mutex);
 
+      PlayerData data = {playerID, player.player.get_center(), -1};
+      if (lastTextureId != player.textureId) {
+         lastTextureId = player.textureId;
+         data.textureId = player.textureId;
+      }
+
       sf::Packet packet;
-      packet << PlayerData{playerID, player.player.get_center(), player.textureId};
+      packet << data;
 
       if (socket.send(packet, address, port) != sf::Socket::Status::Done) {
          printf("Could not send data.\n");
@@ -92,7 +102,6 @@ void receiveMessages(sf::UdpSocket &socket, sf::TcpSocket &chatSocket, unsigned 
          response >> playerData;
 
          if (playerData.id == playerID) {
-            player.textureId = playerData.textureId;
             continue;
          }
 
@@ -143,7 +152,24 @@ int main() {
 
    auto dirIter = std::filesystem::directory_iterator("assets/players");
    int fileCount = std::count_if(begin(dirIter), end(dirIter), [](const auto &entry) { return entry.is_regular_file(); });
+
+   struct SkinIcon {
+      int textureId;
+      cx::Rect rect;
+   };
+
+   std::vector<SkinIcon> textureRects;
+   std::vector<sf::Texture> textures;
    textures.resize(fileCount);
+   textureRects.reserve(fileCount);
+
+   constexpr float windowPaddingX = 100.0f;
+   constexpr float windowPaddingY = 50.0f;
+   constexpr float iconPadding = 5.0f;
+   constexpr float iconSize = 40.0f;
+   constexpr int iconCountX = (windowWidth - windowPaddingX * 2.0f) / (iconSize + iconPadding);
+   int column = 0;
+   int row = 0;
 
    for (const auto &file: std::filesystem::directory_iterator("assets/players")) {
       if (!file.is_regular_file()) {
@@ -164,6 +190,15 @@ int main() {
 
       if (!textures[n].loadFromFile(file.path().string())) {
          printf("Failed to load '%s'.\n", file.path().string().c_str());
+      }
+      else {
+         // setup rects
+         cx::Rect rect ({iconSize}, {windowPaddingX + (column + 0.5f) * (iconSize + iconPadding), windowPaddingY + (row + 0.5f) * (iconSize + iconPadding)});
+         rect.set_texture(&textures[n]);
+         textureRects.push_back({n, rect});
+
+         column = (column + 1) % iconCountX;
+         row += (column == 0);
       }
    }
    srand(time(nullptr));
@@ -208,12 +243,17 @@ int main() {
    }
 
    printf("Successfully connected to %s:%u with ID %d.\n", IPAddress.toString().c_str(), port, playerID);
-   sf::RenderWindow window (sf::VideoMode(960, 540), "Multiplayer Demo");
+   sf::RenderWindow window (sf::VideoMode(windowWidth, windowHeight), "Multiplayer Demo");
    cx::EventHandler event (window);
    window.setFramerateLimit(60);
 
-   cx::Rect chatBar (cx::Vec2f(600.f, 40.f), cx::Vec2f(), cx::Color(125, 125));
-   cx::Text chatText ("", defaultFont, cx::Vec2f(), 24u);
+   cx::Rect chatBar ({750.f, 40.f}, event.get_center() + cx::Vec2f(0.0f, 100.0f), {125, 125});
+   cx::Text chatText ("", defaultFont, chatBar.get_center(), 24);
+
+   cx::Rect chatButton ({50.0f, 50.0f}, {30.0f, windowHeight - 30.0f});
+   cx::Rect brushButton ({50.0f, 50.0f}, {85.0f, windowHeight - 30.0f});
+   chatButton.set_texture(&chatIcon);
+   brushButton.set_texture(&brushIcon);
 
    std::unordered_map<int, Player> players;
    Player &player = players[playerID];
@@ -234,11 +274,16 @@ int main() {
 
    std::string chat;
    bool chatting = false;
+   bool skinSelection = false;
 
    while (window.isOpen()) {
       event.update();
+      cx::MouseState mouseState = event.get_mouse_state(cx::Mouse::left);
 
-      // Update the chat
+      // Update the chat and skin selection
+      chatButton.update(mouseState);
+      brushButton.update(mouseState);
+
       if (event.is_released(cx::Key::enter) && chatting && chat.size() > 1) {
          createBubble(players, chat, playerID);
 
@@ -256,7 +301,15 @@ int main() {
          chatting = false;
       }
 
-      if (event.is_released(cx::Key::slash)) {
+      if (brushButton.is_mouse_up()) {
+         skinSelection = !skinSelection;
+      }
+
+      if (chatButton.is_mouse_up()) {
+         chatting = !chatting;
+      }
+
+      if (event.is_released(cx::Key::slash) && !event.is_down(cx::Key::l_shift) && !event.is_down(cx::Key::r_shift)) {
          chatting = !chatting;
       }
 
@@ -271,10 +324,18 @@ int main() {
          chatText.set_string(chat);
       }
 
+      for (size_t i = 0; skinSelection && i < textureRects.size(); ++i) {
+         textureRects[i].rect.update(mouseState);
+         if (textureRects[i].rect.is_mouse_up()) {
+            std::lock_guard<std::mutex> lock (mutex);
+            player.textureId = textureRects[i].textureId;
+         }
+      }
+
+      // handle player movement
       const float dt = event.get_dt();
       cx::Vec2f direction = event.get_vector(cx::Key::d, cx::Key::a, cx::Key::s, cx::Key::w, cx::ControllerVector::rs);
 
-      // handle player movement
       std::lock_guard<std::mutex> lock (mutex);
       if (!direction.empty() && event.is_released(cx::Key::space) && !chatting) {
          player.player.move(direction.normalize() * dt * 3600.f + cx::Vec2f(cx::randfu(-50.f, 50.f), cx::randfu(-50.f, 50.f)));
@@ -312,19 +373,12 @@ int main() {
          }
       }
 
-      // update camera and UI
-      camera.update(dt);
-      if (chatting) {
-         chatBar.set_center(camera.get_center() + cx::Vec2f(0.f, 100.f));
-         chatText.set_center(chatBar.get_center());
-      }
-
-      camera.apply(window);
-
       // Render to window
       window.clear();
-      platform.render(window);
+      camera.update(dt);
+      camera.apply(window);
 
+      platform.render(window);
       for (auto &[_, plr]: players) {
          plr.player.set_texture((size_t)plr.textureId >= textures.size() ? nullptr : &textures[plr.textureId]);
          plr.player.render(window);
@@ -335,6 +389,14 @@ int main() {
             plr.bubble.rect.render(window);
             plr.bubble.text.render(window);
          }
+      }
+
+      window.setView(window.getDefaultView());
+      chatButton.render(window);
+      brushButton.render(window);
+
+      for (size_t i = 0; skinSelection && i < textureRects.size(); ++i) {
+         textureRects[i].rect.render(window);
       }
 
       if (chatting) {

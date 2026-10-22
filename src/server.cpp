@@ -145,7 +145,8 @@ int main() {
             socket.send(idPacket, senderAddress, senderPort);
          }
          else {
-            players[id] = {player.textureId, player.position};
+            players[id].position = player.position;
+            if (player.textureId >= 0) players[id].textureId = player.textureId;
          }
 
          sf::Packet response;
