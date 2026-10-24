@@ -32,4 +32,4 @@ Chat message from ID 1: Hello, World!
 ```
 
 ## Credits
-This project was made by Daniel Vishnevsky and is licensed under MIT License. It was made in February of 2025 and published in August 2026 as an effort to make all of my projects open-source.
+This project was made by Daniel Vishnevsky and is licensed under MIT License. It was made in February of 2025 and published in October 2026 as an effort to make all of my projects open-source.
